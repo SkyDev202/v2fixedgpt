@@ -1,0 +1,20 @@
+DB fix notes
+============
+
+Fixed issues found from the logs:
+1. SQLite schema missing errors like:
+   - no such table: users
+   - no such table: admins
+   - no such table: settings
+   - no such table: anti_settings
+
+2. Added automatic schema self-repair/retry in core.py. If Railway starts with an empty DB file or the bot/web process races during startup, the bot now runs init_db() and retries the failed query.
+
+3. Added automatic schema self-repair in anticheat.py for the /ip-verify web server, especially anti_settings.
+
+4. Removed unsupported timeout keyword injection from wrapped Telegram API methods. This fixes:
+   TeleBot.edit_message_text() got an unexpected keyword argument 'timeout'
+
+Important Railway setting:
+- For permanent data, Railway must have a persistent Volume mounted at /data, because DB_PATH defaults to /data/bot_database.db.
+- Without a Railway volume, the database can disappear when Railway restarts/redeploys the container.

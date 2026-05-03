@@ -315,7 +315,14 @@ def create_verification_app(
             referral_hold_until TEXT DEFAULT '',
             last_verification_at TEXT DEFAULT '',
             multi_account_warned INTEGER DEFAULT 0,
-            latest_verify_msg_id INTEGER DEFAULT 0
+            latest_verify_msg_id INTEGER DEFAULT 0,
+            welcome_bonus_paid INTEGER DEFAULT 0,
+            bonus_balance REAL DEFAULT 0,
+            last_active_at TEXT DEFAULT '',
+            total_referral_earnings REAL DEFAULT 0,
+            force_join_left_notified INTEGER DEFAULT 0,
+            latest_join_msg_id INTEGER DEFAULT 0,
+            latest_welcome_msg_id INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS settings (
@@ -392,24 +399,40 @@ def create_verification_app(
         conn.close()
 
     def get_setting_value(key: str, default: Any = None) -> Any:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM settings WHERE key=?", (key,))
-        row = cur.fetchone()
-        conn.close()
-        if not row:
-            return default
-        return safe_json_loads(row["value"], row["value"])
+        for attempt in range(2):
+            conn = get_db()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT value FROM settings WHERE key=?", (key,))
+                row = cur.fetchone()
+                if not row:
+                    return default
+                return safe_json_loads(row["value"], row["value"])
+            except sqlite3.OperationalError as exc:
+                if attempt == 0 and ("no such table" in str(exc).lower() or "no such column" in str(exc).lower()):
+                    init_schema()
+                    continue
+                raise
+            finally:
+                conn.close()
 
     def get_anti_settings() -> Dict[str, Any]:
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("SELECT value FROM anti_settings WHERE key='config'")
-        row = cur.fetchone()
-        conn.close()
-        if not row:
-            return default_anticheat_settings()
-        return safe_json_loads(row["value"], default_anticheat_settings())
+        for attempt in range(2):
+            conn = get_db()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT value FROM anti_settings WHERE key='config'")
+                row = cur.fetchone()
+                if not row:
+                    return default_anticheat_settings()
+                return safe_json_loads(row["value"], default_anticheat_settings())
+            except sqlite3.OperationalError as exc:
+                if attempt == 0 and ("no such table" in str(exc).lower() or "no such column" in str(exc).lower()):
+                    init_schema()
+                    continue
+                raise
+            finally:
+                conn.close()
 
     def get_real_ip() -> str:
         forwarded_for = request.headers.get("X-Forwarded-For", "")

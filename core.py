@@ -317,8 +317,9 @@ def _wrap_telegram_call(method_name, text_arg_index=None, caption_arg_index=None
                 kwargs["caption"] = premiumize_text(kwargs.get("caption", ""))
 
         # Railway/Telegram uploads sometimes fail with write/read timeout.
-        # Keep all features same, but make wrapped Telegram calls retry safely.
-        kwargs.setdefault("timeout", 90)
+        # pyTelegramBotAPI does not accept a timeout keyword on every method
+        # (edit_message_text crashed with unexpected keyword argument 'timeout').
+        # Global apihelper timeouts above handle network waits safely.
         args = tuple(args)
 
         try:
@@ -395,6 +396,14 @@ def _is_sqlite_corruption_error(exc):
         "database disk image is malformed" in text
         or "disk i/o error" in text
         or "file is not a database" in text
+    )
+
+def _is_missing_schema_error(exc):
+    text = str(exc).lower()
+    return (
+        "no such table" in text
+        or "no such column" in text
+        or "has no column named" in text
     )
 
 def _close_thread_db():
@@ -772,7 +781,7 @@ def _execute_once(query, params=(), fetch=False, fetchone=False):
 
 def db_execute(query, params=(), fetch=False, fetchone=False):
     with DB_LOCK:
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 return _execute_once(query, params, fetch=fetch, fetchone=fetchone)
             except Exception as e:
@@ -786,14 +795,22 @@ def db_execute(query, params=(), fetch=False, fetchone=False):
                 _close_thread_db()
                 if _is_sqlite_corruption_error(e):
                     repair_or_reset_database_if_needed()
-                    if attempt == 0:
+                    init_db()
+                    if attempt < 2:
+                        continue
+                if _is_missing_schema_error(e):
+                    # Railway/free hosts can start with an empty DB file or race the web and bot
+                    # processes. Re-run migrations and retry the original query instead of
+                    # letting every command fail with 'no such table'.
+                    init_db()
+                    if attempt < 2:
                         continue
                 break
         return None
 
 def db_lastrowid(query, params=()):
     with DB_LOCK:
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 conn = get_fast_db()
                 c = conn.cursor()
@@ -813,7 +830,12 @@ def db_lastrowid(query, params=()):
                 _close_thread_db()
                 if _is_sqlite_corruption_error(e):
                     repair_or_reset_database_if_needed()
-                    if attempt == 0:
+                    init_db()
+                    if attempt < 2:
+                        continue
+                if _is_missing_schema_error(e):
+                    init_db()
+                    if attempt < 2:
                         continue
                 break
         return None
